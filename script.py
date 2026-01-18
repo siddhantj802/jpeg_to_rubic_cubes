@@ -1,88 +1,117 @@
-from PIL import Image,ImageDraw
+from PIL import Image, ImageDraw
 from collections import Counter
 import itertools
-import json
 import os
+
 input_path = "./input_images/sellerimg.png"
 output_dir = './saved_images'
-output_path = os.path.join(output_dir, "sellerimg_resize.png")
 
-# hard coded size; maybe change in future
-#size = (20 , 20)
-cube_size = 200
-gap = 10
-border_thickness = 20
-border_color = (0,0,0)
+# Adjust these values
+CUBE_SIZE = 50
+GAP = 2
+BORDER_THICKNESS = 1
+MAX_INPUT_DIMENSION = 200  # Maximum dimension for input image
+MAX_OUTPUT_DIMENSION = 4000  # Maximum dimension for output image
 
-#hard coded cube color values
 cube_color = {
-    'White'   : (255, 255, 255),
-    'Yellow'  : (255, 255,   0),
-    'Red'     : (255,   0,   0),
-    'Orange'  : (255, 165,   0),
-    'Blue'    : (  0,   0, 255),
-    'Green'   : (  0, 255,   0)
+    'White': (255, 255, 255),
+    'Yellow': (255, 255, 0),
+    'Red': (255, 0, 0),
+    'Orange': (255, 165, 0),
+    'Blue': (0, 0, 255),
+    'Green': (0, 255, 0)
 }
 
 try:
     os.makedirs(output_dir, exist_ok=True)
-
+    
     with Image.open(input_path) as img:
-        #Never use [[...]] * n for 2D arrays unless you want shared references (almost never).
-        color_grid = [[0]*img.size[1] for _ in range(img.size[0])]
-        grid_width = len(color_grid) # 406
-        grid_height = len(color_grid[0]) # 333  # 406 x 333
-        print(f"grid_width is {grid_width} grid_height is {grid_height}")
-        img_width = grid_width * (cube_size+gap)
-        img_height = grid_height * (cube_size+gap)
-
-        #resized_img = img.resize(size)
-        rgb_img = img.convert('RGB')
-        width,height = rgb_img.size
-        print(f"width is {width} height is {height}")
-        for x in range(width):
-            for y in range(height):
-                shortest_distance = float('inf')
-                shortest_color = ''
-                #print(f"rgb for {x},{y} pixel is {rgb_img.getpixel((x,y))}")
-                r_value, g_value , b_value = rgb_img.getpixel((x,y))
-                for color_key , (cr,cg,cb) in cube_color.items():
-                    distance = abs(cr-r_value)+abs(cb-b_value)+abs(cg-g_value)
-                    if shortest_distance > distance:
-                        shortest_distance = distance
-                        shortest_color = color_key
-
-                color_grid[x][y] = shortest_color
-        #print(color_grid)            
-        color_counter = dict(Counter(itertools.chain(*color_grid))) # "*" is an unpacking operator; it unpacks 2D array for the Counter function.
+        print(f"Original image: {img.size}")
         
-    with open('./output/cube_layout.json', 'w') as f:
-        json.dump(color_grid , f)
+        # Resize input if too large
+        if max(img.size) > MAX_INPUT_DIMENSION:
+            ratio = MAX_INPUT_DIMENSION / max(img.size)
+            new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+            print(f"Resized to: {img.size}")
+        
+        width, height = img.size
+        
+        # Calculate optimal cube size based on desired output
+        desired_cube_size = CUBE_SIZE
+        estimated_width = width * (desired_cube_size + GAP)
+        estimated_height = height * (desired_cube_size + GAP)
+        
+        # If output would be too large, reduce cube size
+        if max(estimated_width, estimated_height) > MAX_OUTPUT_DIMENSION:
+            max_cube_from_output = MAX_OUTPUT_DIMENSION // max(width, height) - GAP
+            cube_size = max(50, max_cube_from_output)  # Minimum 50px
+            print(f"Reducing cube size from {desired_cube_size} to {cube_size}")
+        else:
+            cube_size = desired_cube_size
+        
+        print(f"Using cube size: {cube_size}")
+        
+        # Create color grid
+        color_grid = [[0] * width for _ in range(height)]
+        rgb_img = img.convert('RGB')
+        
+        for y in range(height):
+            for x in range(width):
+                r, g, b = rgb_img.getpixel((x, y))
+                best_color = min(cube_color.items(),
+                               key=lambda item: sum((c1 - c2) ** 2 for c1, c2 in zip(item[1], (r, g, b))))
+                color_grid[y][x] = best_color[0]
+        
+        # Calculate output size
+        img_width = width * (cube_size + GAP) + GAP
+        img_height = height * (cube_size + GAP) + GAP
+        
+        print(f"Output will be: {img_width} x {img_height} pixels")
+        print(f"Memory estimate: {(img_width * img_height * 3) / (1024**2):.1f} MB")
+        
+        # Check if output is too large
+        if img_width * img_height > 10000 * 10000:  # 100MP limit
+            print("Warning: Output would be very large!")
+            print("Consider reducing cube size or input image size further")
+        
+        # Create output image
+        output_img = Image.new("RGB", (img_width, img_height), (211, 211, 211))
+        draw = ImageDraw.Draw(output_img)
+        
+        # Draw cubes
+        for row in range(height):
+            for col in range(width):
+                left = col * (cube_size + GAP) + GAP
+                top = row * (cube_size + GAP) + GAP
+                right = left + cube_size
+                bottom = top + cube_size
                 
-    output_img = Image.new(mode="RGB", size=(img_width,img_height),  color = (211, 211, 211))    
-    draw = ImageDraw.Draw(output_img)
-    for x in range(grid_height):
-        for y in range(grid_width):
-            pixel_x = x * 21 
-            pixel_y = y * 21
-            right  = pixel_x + cube_size
-            bottom = pixel_y + cube_size
-            
-            cube_name = color_grid[x][y]
-            rgb_color = cube_color[cube_name]
-            
-            
-            draw.rectangle(xy=(pixel_x,pixel_y,right,bottom), fill=rgb_color,outline=(153,153,134),width=border_thickness)
-    output_img.save((os.path.join(output_dir , "mosaic_img.png")))
-    output_img.show()
-            
-            
-except FileNotFoundError:
-    print("File Not Found")
+                cube_name = color_grid[row][col]
+                rgb_color = cube_color[cube_name]
+                
+                draw.rectangle(
+                    (left, top, right, bottom),
+                    fill=rgb_color,
+                    outline=(100, 100, 100),
+                    width=BORDER_THICKNESS
+                )
+        
+        # Save with optimization
+        output_path = os.path.join(output_dir, "mosaic.jpg")
+        output_img.save(output_path, "JPEG", quality=90, optimize=True)
+        print(f"Saved to: {output_path} ({(os.path.getsize(output_path) / 1024):.1f} KB)")
+        
+        # Create a smaller preview for display
+        preview_size = (min(1200, img_width), min(800, img_height))
+        if img_width > preview_size[0] or img_height > preview_size[1]:
+            preview = output_img.copy()
+            preview.thumbnail(preview_size, Image.Resampling.LANCZOS)
+            preview.show()
+        else:
+            output_img.show()
+
 except Exception as e:
-    print("something went wrong",e)
-finally:
-
-    print('Operation Complete')
-
-
+    print(f"Error: {e}")
+    import traceback
+    traceback.print_exc()
